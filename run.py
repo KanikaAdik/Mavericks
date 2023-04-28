@@ -3,7 +3,7 @@ from time import sleep
 from datetime import datetime, timedelta
 import datetime as dt
 from threading import Thread
-
+import pandas as pd
 # NOTE: for documentation on the different classes and methods used to interact with the SHIFT system, 
 # see: https://github.com/hanlonlab/shift-python/wiki
 
@@ -44,14 +44,129 @@ def close_positions(trader, ticker):
         trader.submit_order(order)
         sleep(1)
 
+#def market_trend(trader: shift.Trader):
+
+        
+def nno_of_lots(risk_type, funds_available):
+    if risk_type == 'high':
+        lot_size = 0.05 * funds_available
+    elif risk_type == 'medium':
+        lot_size = 0.15 * funds_available
+    elif risk_type == 'low':
+        lot_size = 0.2 * funds_available
+    else:
+        print('Invalid risk type!')
+        return None
+    
+    return lot_size
+
+def no_of_lots(risk_type, funds_available, current_price):
+    if risk_type == 'high':
+        if current_price > 1000:
+            lot_size = 0.02 * funds_available / current_price
+        else:
+            lot_size = 0.05 * funds_available / current_price
+    elif risk_type == 'medium':
+        if current_price > 1000:
+            lot_size = 0.1 * funds_available / current_price
+        else:
+            lot_size = 0.15 * funds_available / current_price
+    elif risk_type == 'low':
+        lot_size = 0.2 * funds_available / current_price
+    else:
+        print('Invalid risk type!')
+        return None
+
+    return lot_size
+
+
+def risk_type(stock_df):
+    price_std = stock_df[['ask_price', 'bid_price']].std().mean()
+    
+    if price_std > 0.05:
+        risk = 'high'
+    elif price_std > 0.02:
+        risk = 'medium'
+    else:
+        risk = 'low'
+    return risk
+
+def book_profits(initial_investment, current_value):
+    profit_percentage = (current_value - initial_investment) / initial_investment * 100
+    if profit_percentage >= 5:
+        return "Sell"
+    else:
+        return "Hold"
+
 
 def strategy(trader: shift.Trader, ticker: str, endtime):
+    # know market trend
+    current = trader.get_last_trade_time()
+    end_time = current + timedelta(minutes=10)
+    data_list=[]
+    df = pd.DataFrame()
+    #market_trend(trader)
+    t_end = current + timedelta(minutes=1)
+    while trader.get_last_trade_time() < t_end:
+        current_price = trader.get_last_price(ticker)    
+        best_price = trader.get_best_price(ticker)
+        best_bid = best_price.get_bid_price()
+        best_ask = best_price.get_ask_price()
+        previous_price = (best_bid + best_ask) / 2
+        data_dict = {'timestamp': trader.get_last_trade_time(), 'ticker': ticker,  'ask_price': best_ask, 'bid_price': best_bid, 'mid_price': previous_price}
+    	# append the dictionary to the list
+        data_list.append(data_dict)
+    df = pd.DataFrame(data_list)
+    print("\nDATAFRAME:::", df.head())
+    risk = risk_type(df[df['ticker']==ticker])
+    print("\nRISK:::::", risk)
+     
+    mid_price = (best_bid + best_ask) / 2
+    while (trader.get_last_trade_time() < endtime):
+        # cancel unfilled orders from previous time-step
+        cancel_orders(trader, ticker)
+        funds_available = trader.get_portfolio_summary().get_total_bp()
+        current_price = best_ask
+        nolot = no_of_lots(risk, funds_available,current_price )
+        rounded_number = round(nolot, 2)  # round to 2 decimal places
+        no_lot = round(nolot/100) 
+        print("\n noof lot :", no_lot)
+	# place order
+        order_buy = shift.Order(shift.Order.Type.LIMIT_BUY, ticker, no_lot, mid_price)
+        trader.submit_order(order_buy)
+        order_sell = shift.Order(shift.Order.Type.LIMIT_SELL, ticker, no_lot, mid_price)
+        trader.submit_order(order_sell)
+        for order in trader.get_submitted_orders():
+            if order.symbol == ticker and  order.status == shift.Order.Status.FILLED:
+                price = order.executed_price
+                size = order.executed_size
+                type = order.type
+                print("\n Executed : Price m Size", price, size, dir(order))
+                print("Track if profit")
+                current_price = trader.get_last_price(ticker)
+                state= book_profits(price,current_price)
+                if state=='Sell':
+                     if type == 'shift.Order.Type.LIMIT_BUY':
+                         order = shift.Order(shift.Order.Type.MARKET_SELL, ticker, size, price)
+                     elif type == 'shift.Order.Type.LIMIT_SELL':
+                         order = shift.Order(shift.Order.Type.MARKET_BUY, ticker, size, price)
+                     trader.submit_order(order)
+                else:
+                     continue
+    return      
+
+
+def strategyyyy(trader: shift.Trader, ticker: str, endtime):
     # NOTE: Unlike the following sample strategy, it is highly reccomended that you track and account for your buying power and
     # position sizes throughout your algorithm to ensure both that have adequite captial to trade throughout the simulation and
     # that you are able to close your position at the end of the strategy without incurring major losses.
+    #track buying power check capital and close position without loss 
+    #position size ot lot
+    #check loss
 
     initial_pl = trader.get_portfolio_item(ticker).get_realized_pl()
-
+    
+    print( "Ticker last price:", ticker ,"::: ",   trader.get_last_price(ticker))
     # strategy parameters
     check_freq = 1
     order_size = 5  # NOTE: this is 5 lots which is 500 shares.
@@ -109,7 +224,7 @@ def main(trader):
     start_time = datetime.combine(current, dt.time(9, 30, 0))
     end_time = datetime.combine(current, dt.time(15, 50, 0))
     #start_time = current
-    #end_time = start_time + timedelta(minutes=1)
+    #end_time = start_time + timedelta(minutes=15)
     print(start_time, end_time)
     while trader.get_last_trade_time() < start_time:
         print("still waiting for market open")
@@ -154,30 +269,10 @@ def main(trader):
     print(
         f"final profits/losses: {trader.get_portfolio_summary().get_total_realized_pl() - initial_pl}")
 
-import random
-
-class MarketMaker:
-    def __init__(self):
-        self.stocks = ["AAPL", "MSFT", "GOOG", "AMZN", "FB", "TSLA", "NVDA", "NFLX", "PYPL", "INTC", 
-                       "CSCO", "ADBE", "AVGO", "TXN", "QCOM", "CRM", "ACN", "IBM", "V", "MA"]
-        self.bids = {}
-        self.asks = {}
-
-    def update_quote(self, stock, bid_price, ask_price):
-        self.bids[stock] = bid_price
-        self.asks[stock] = ask_price
-
-    def make_quotes(self):
-        for stock in self.stocks:
-            mid_price = (self.bids.get(stock, 0) + self.asks.get(stock, 0)) / 2
-            bid_price = mid_price - random.uniform(0, 0.5)
-            ask_price = mid_price + random.uniform(0, 0.5)
-            self.update_quote(stock, bid_price, ask_price)
-
-
 
 if __name__ == '__main__':
     with shift.Trader("market_mavericks") as trader:
+    #with shift.Trader("market_mavericks_test01") as trader:
         trader.connect("initiator.cfg", "1n5Yj51a10")
         sleep(1)
         trader.sub_all_order_book()
