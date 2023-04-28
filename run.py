@@ -106,7 +106,7 @@ def strategy(trader: shift.Trader, ticker: str, endtime):
     data_list=[]
     df = pd.DataFrame()
     #market_trend(trader)
-    t_end = current + timedelta(minutes=1)
+    t_end = current + timedelta(minutes=5)
     while trader.get_last_trade_time() < t_end:
         current_price = trader.get_last_price(ticker)    
         best_price = trader.get_best_price(ticker)
@@ -128,8 +128,7 @@ def strategy(trader: shift.Trader, ticker: str, endtime):
         funds_available = trader.get_portfolio_summary().get_total_bp()
         current_price = best_ask
         nolot = no_of_lots(risk, funds_available,current_price )
-        rounded_number = round(nolot, 2)  # round to 2 decimal places
-        no_lot = round(nolot/100) 
+        no_lot = int(str(int(nolot))[0])
         print("\n noof lot :", no_lot)
 	# place order
         order_buy = shift.Order(shift.Order.Type.LIMIT_BUY, ticker, no_lot, mid_price)
@@ -141,7 +140,7 @@ def strategy(trader: shift.Trader, ticker: str, endtime):
                 price = order.executed_price
                 size = order.executed_size
                 type = order.type
-                print("\n Executed : Price m Size", price, size, dir(order))
+                print("\n Executed : Price m Size", price, size) 
                 print("Track if profit")
                 current_price = trader.get_last_price(ticker)
                 state= book_profits(price,current_price)
